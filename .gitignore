@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+trade_log.json
+crypto_signals.json
+crypto_trade_log.json
+crypto_market_context.json
+auto_accept_log.json
+daily_report.json
+legal_sessions/
+*.log
