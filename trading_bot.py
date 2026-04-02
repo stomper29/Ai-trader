@@ -109,7 +109,7 @@ def scan_and_trade():
 CURRENT PORTFOLIO STATE:
 - Portfolio value: ${account['balance']:,.2f}
 - Available cash: ${account['cash']:,.2f}
-- Buying power: ${account['buying_power']:,.2f}
+- Buying power ex: ${account['buying_power']:,.2f}
 - Open positions: {json.dumps(positions, indent=2)}
 - Pending orders: {json.dumps(orders, indent=2)}
 
