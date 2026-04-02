@@ -11,6 +11,7 @@ import time
 import schedule
 from datetime import datetime
 import anthropic
+import db
 
 # ── KEYS ──────────────────────────────────────────────
 ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_KEY")
@@ -277,18 +278,10 @@ def _parse_signals(text):
     return [s for s in signals if s.get('confidence', 0) >= MIN_CONFIDENCE]
 
 def _save_market_context(data):
-    regime = data.get("market_regime", {})
-    if regime:
-        entry = {
-            "timestamp": datetime.now().isoformat(),
-            "btc_price": data.get("btc_price"),
-            "eth_price": data.get("eth_price"),
-            "altseason_probability": data.get("altseason_probability"),
-            "macro_notes": data.get("macro_notes"),
-            **regime
-        }
-        with open("crypto_market_context.json", 'a') as f:
-            f.write(json.dumps(entry) + '\n')
+    try:
+        db.save_market_context(data)
+    except Exception as e:
+        print(f"  [DB] save_market_context failed: {e}")
 
 def _display_signals(signals):
     print(f"\n  {len(signals)} SIGNAL(S) FOUND:")
@@ -319,6 +312,15 @@ def _display_signals(signals):
     print(f"\n  {'─'*56}")
 
 def _save_signals(signals, scan_type):
+    # Save each signal to DB
+    saved = 0
+    for sig in signals:
+        try:
+            db.log_crypto_signal(sig, scan_type)
+            saved += 1
+        except Exception as e:
+            print(f"  [DB] log_crypto_signal failed: {e}")
+    # Also write to local file as backup
     entry = {
         "timestamp": datetime.now().isoformat(),
         "scan_type": scan_type,
@@ -327,7 +329,7 @@ def _save_signals(signals, scan_type):
     }
     with open(SIGNAL_FILE, 'a') as f:
         f.write(json.dumps(entry) + '\n')
-    print(f"\n  Signals saved to {SIGNAL_FILE}")
+    print(f"\n  {saved}/{len(signals)} signals saved to DB + {SIGNAL_FILE}")
 
 # ── EXECUTION (ALPACA CRYPTO) ─────────────────────────
 def _execute_crypto_signals(signals):
@@ -387,14 +389,12 @@ def _execute_crypto_signals(signals):
             print(f"  FAIL — {e}")
 
 def _log_crypto_trade(signal, notional_usd, alpaca_pair):
-    entry = {
-        "timestamp": datetime.now().isoformat(),
-        "pair": alpaca_pair,
-        "notional_usd": notional_usd,
-        **signal
-    }
-    with open("crypto_trade_log.json", 'a') as f:
-        f.write(json.dumps(entry) + '\n')
+    try:
+        trade = {**signal, "ticker": alpaca_pair, "qty": notional_usd,
+                 "order_type": "market", "strategy": "crypto_execution"}
+        db.log_trade(trade)
+    except Exception as e:
+        print(f"  [DB] _log_crypto_trade failed: {e}")
 
 # ── ALTSEASON MONITOR ─────────────────────────────────
 def altseason_check():
@@ -406,6 +406,7 @@ def altseason_check():
 
 # ── MAIN ──────────────────────────────────────────────
 if __name__ == "__main__":
+    db.init_db()
     print("=" * 60)
     print("  AI CRYPTO SCANNER  —  ACTIVE")
     print("=" * 60)
