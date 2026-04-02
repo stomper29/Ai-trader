@@ -11,6 +11,7 @@ import schedule
 from datetime import datetime, timedelta
 import anthropic
 import alpaca_trade_api as tradeapi
+import db
 
 # ── KEYS ──────────────────────────────────────────────
 ALPACA_KEY    = os.environ.get("ALPACA_KEY")
@@ -243,10 +244,20 @@ def monitor_stops():
 # ── LOGGING ────────────────────────────────────────────
 def log_trade(trade):
     entry = {"timestamp": datetime.now().isoformat(), **trade}
+    # Write to DB (primary) and local file (backup)
+    try:
+        db.log_trade(entry)
+    except Exception as e:
+        print(f"  [DB] log_trade failed: {e}")
     with open(TRADE_LOG, 'a') as f:
         f.write(json.dumps(entry) + '\n')
 
 def load_recent_trades(n=30):
+    try:
+        return db.get_recent_trades(n)
+    except Exception:
+        pass
+    # Fallback to local file
     try:
         with open(TRADE_LOG, 'r') as f:
             lines = f.readlines()
@@ -310,14 +321,13 @@ Return JSON:
             print(block.text[:500])
             try:
                 data = json.loads(block.text)
-                with open("daily_report.json", 'a') as f:
-                    entry = {"date": datetime.now().date().isoformat(), **data}
-                    f.write(json.dumps(entry) + '\n')
+                db.save_daily_report(data)
             except Exception:
                 pass
 
 # ── MAIN ──────────────────────────────────────────────
 if __name__ == "__main__":
+    db.init_db()
     print("=" * 60)
     print("  AI STOCK TRADING BOT  —  ACTIVE")
     print("=" * 60)

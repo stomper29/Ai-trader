@@ -15,6 +15,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 import anthropic
+import db
 
 # ── KEYS ──────────────────────────────────────────────
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_KEY")
@@ -427,6 +428,12 @@ CONTRACT TEXT:
         return self.ask(prompt)
 
     def _save_session(self):
+        # Save to DB (primary)
+        try:
+            db.save_legal_session(self.session_id, self.conversation_history)
+        except Exception as e:
+            print(f"  [DB] save_legal_session failed: {e}")
+        # Local file backup
         data = {
             "session_id": self.session_id,
             "updated": datetime.now().isoformat(),
@@ -437,6 +444,18 @@ CONTRACT TEXT:
             json.dump(data, f, indent=2)
 
     def load_session(self, session_id: str) -> bool:
+        # Try DB first
+        try:
+            history = db.load_legal_session(session_id)
+            if history is not None:
+                self.conversation_history = history
+                self.session_id   = session_id
+                self.session_file = SESSION_DIR / f"session_{session_id}.json"
+                print(f"Session {session_id} loaded from DB ({len(history)} messages)")
+                return True
+        except Exception:
+            pass
+        # Fallback to local file
         session_file = SESSION_DIR / f"session_{session_id}.json"
         try:
             with open(session_file, 'r') as f:
@@ -444,7 +463,7 @@ CONTRACT TEXT:
             self.conversation_history = data.get("history", [])
             self.session_id   = session_id
             self.session_file = session_file
-            print(f"Session {session_id} loaded ({len(self.conversation_history)} messages)")
+            print(f"Session {session_id} loaded from file ({len(self.conversation_history)} messages)")
             return True
         except FileNotFoundError:
             print(f"Session {session_id} not found")
@@ -457,12 +476,25 @@ CONTRACT TEXT:
         print("Session cleared. New session started.")
 
     def list_sessions(self):
+        # Try DB first
+        try:
+            rows = db.list_legal_sessions()
+            if rows:
+                print(f"\n{chr(0x2500)*50}")
+                print("SAVED LEGAL SESSIONS (DB):")
+                for r in rows:
+                    print(f"  {r['session_id']}  [{r['message_count']} msgs]  {r['updated_at'][:16]}")
+                print(f"{chr(0x2500)*50}\n")
+                return
+        except Exception:
+            pass
+        # Fallback to local files
         sessions = sorted(SESSION_DIR.glob("session_*.json"), reverse=True)
         if not sessions:
             print("No saved sessions found.")
             return
-        print(f"\n{'─'*50}")
-        print("SAVED LEGAL SESSIONS:")
+        print(f"\n{chr(0x2500)*50}")
+        print("SAVED LEGAL SESSIONS (local):")
         for s in sessions[:10]:
             try:
                 with open(s) as f:
@@ -472,7 +504,7 @@ CONTRACT TEXT:
                 print(f"  {d['session_id']}  [{msgs} msgs]  {updated}")
             except Exception:
                 print(f"  {s.stem}")
-        print(f"{'─'*50}\n")
+        print(f"{chr(0x2500)*50}\n")
 
 # ── INTERACTIVE CLI ────────────────────────────────────
 def interactive_mode():

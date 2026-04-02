@@ -14,6 +14,7 @@ from datetime import datetime, date
 from pathlib import Path
 import anthropic
 import alpaca_trade_api as tradeapi
+import db
 
 # ── KEYS ──────────────────────────────────────────────
 ALPACA_KEY    = os.environ.get("ALPACA_KEY")
@@ -315,20 +316,71 @@ def execute_signal(signal: dict, asset_type: str = "crypto"):
     return False
 
 def _log_auto_trade(signal, notional, symbol, status):
+    try:
+        db.log_auto_trade(
+            symbol=symbol,
+            action=signal.get("action", ""),
+            notional=notional,
+            status=status,
+            confidence=signal.get("confidence", 0),
+            reasoning=signal.get("reasoning", ""),
+            daily_count=state["daily_trades"],
+        )
+    except Exception as e:
+        print(f"  [DB] log_auto_trade failed: {e}")
+    # Local backup
     entry = {
-        "timestamp":   datetime.now().isoformat(),
-        "symbol":      symbol,
-        "notional":    notional,
-        "status":      status,
-        "daily_count": state["daily_trades"],
+        "timestamp": datetime.now().isoformat(),
+        "symbol": symbol, "notional": notional,
+        "status": status, "daily_count": state["daily_trades"],
         **signal
     }
     with open(AUTO_LOG, 'a') as f:
         f.write(json.dumps(entry) + '\n')
 
 # ── SIGNAL PROCESSOR ──────────────────────────────────
-def _load_new_signals(signal_file: str, last_processed: str) -> list[dict]:
-    """Read signal file and return entries newer than last_processed timestamp."""
+def _load_new_signals_db(last_crypto_ts: str, last_stock_ts: str) -> list[dict]:
+    """
+    Pull unprocessed signals from the database.
+    Returns combined list of crypto + stock signals newer than the given timestamps.
+    """
+    signals = []
+
+    # Crypto signals from DB
+    try:
+        rows = db.get_recent_crypto_signals(50)
+        for row in rows:
+            ts = row.get("timestamp", "")
+            if ts > last_crypto_ts:
+                row["_source_ts"]  = ts
+                row["_asset_type"] = "crypto"
+                row["coin"]        = row.get("coin", "")
+                # Reconstruct entry_zone for compatibility
+                row["entry_zone"]  = {"low": row.get("entry_low"), "high": row.get("entry_high")}
+                row["take_profit_1"] = row.get("take_profit_1")
+                signals.append(row)
+    except Exception as e:
+        print(f"  [DB] crypto signal load failed: {e}")
+        # Fallback to file
+        signals += _load_new_signals_file(SIGNAL_FILE, last_crypto_ts, "crypto")
+
+    # Stock signals from DB
+    try:
+        rows = db.get_recent_trades(50)
+        for row in rows:
+            ts = row.get("timestamp", "")
+            if ts > last_stock_ts:
+                row["_source_ts"]  = ts
+                row["_asset_type"] = "stock"
+                signals.append(row)
+    except Exception as e:
+        print(f"  [DB] stock signal load failed: {e}")
+        signals += _load_new_signals_file(STOCK_SIGNAL_FILE, last_stock_ts, "stock")
+
+    return signals
+
+def _load_new_signals_file(signal_file: str, last_processed: str, asset_type: str) -> list[dict]:
+    """Fallback: read signal file and return entries newer than last_processed."""
     signals = []
     try:
         with open(signal_file, 'r') as f:
@@ -340,16 +392,14 @@ def _load_new_signals(signal_file: str, last_processed: str) -> list[dict]:
                     entry = json.loads(line)
                     ts = entry.get("timestamp", "")
                     if ts > last_processed:
-                        # Handle crypto scanner format (has "signals" list)
                         if "signals" in entry:
                             for sig in entry["signals"]:
-                                sig["_source_ts"] = ts
-                                sig["_asset_type"] = "crypto"
+                                sig["_source_ts"]  = ts
+                                sig["_asset_type"] = asset_type
                                 signals.append(sig)
                         else:
-                            # Trading bot format — single trade entry
-                            entry["_source_ts"] = ts
-                            entry["_asset_type"] = "stock"
+                            entry["_source_ts"]  = ts
+                            entry["_asset_type"] = asset_type
                             signals.append(entry)
                 except json.JSONDecodeError:
                     continue
@@ -369,12 +419,7 @@ class AutoAcceptBot:
             print(f"\n[AUTO-BOT] Circuit breaker: {reason}")
             return
 
-        # Load new crypto signals
-        crypto_signals = _load_new_signals(SIGNAL_FILE, self.last_crypto_ts)
-        # Load new stock signals
-        stock_signals  = _load_new_signals(STOCK_SIGNAL_FILE, self.last_stock_ts)
-
-        all_signals = crypto_signals + stock_signals
+        all_signals = _load_new_signals_db(self.last_crypto_ts, self.last_stock_ts)
 
         if not all_signals:
             return
@@ -477,6 +522,7 @@ class AutoAcceptBot:
 
     def run(self):
         self.running = True
+        db.init_db()
         print("=" * 60)
         print("  AUTO ACCEPT BOT  —  ACTIVE")
         print("=" * 60)
