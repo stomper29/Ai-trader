@@ -22,10 +22,28 @@ def check_env():
     missing_required = [k for k in required if not os.environ.get(k)]
     missing_trading  = [k for k in trading  if not os.environ.get(k)]
     if missing_required:
-        print(f"FATAL: Missing required env vars: {', '.join(missing_required)}")
+        print("=" * 60)
+        print("  STARTUP FAILED — Missing environment variables")
+        print("=" * 60)
+        for k in missing_required:
+            print(f"  MISSING: {k}")
+        print()
+        print("  HOW TO FIX ON RAILWAY:")
+        print("  1. Go to railway.app → your project")
+        print("  2. Click your service → Variables tab")
+        print("  3. Add these variables:")
+        print()
+        print("     ANTHROPIC_KEY   = sk-ant-...  (from console.anthropic.com)")
+        print("     ALPACA_KEY      = (from alpaca.markets → API Keys)")
+        print("     ALPACA_SECRET   = (from alpaca.markets → API Keys)")
+        print("     DATABASE_URL    = mysql://root:...@mainline.proxy.rlwy.net:24601/railway")
+        print()
+        print("  4. Railway will redeploy automatically once variables are saved.")
+        print("=" * 60)
         sys.exit(1)
     if missing_trading:
-        print(f"WARNING: Trading features disabled — missing: {', '.join(missing_trading)}")
+        print(f"WARNING: Trading/Crypto bots disabled — missing: {', '.join(missing_trading)}")
+        print("         Add ALPACA_KEY and ALPACA_SECRET in Railway Variables to enable.")
         return False
     return True
 
